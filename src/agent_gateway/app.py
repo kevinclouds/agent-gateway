@@ -94,6 +94,16 @@ def create_app() -> FastAPI:
 
     @app.post("/v1/responses")
     async def create_response(request: Request):
+        try:
+            return await _handle_create_response(request)
+        except Exception as e:
+            return JSONResponse(
+                status_code=502,
+                content={"error": f"upstream request failed: {type(e).__name__}: {e}"},
+            )
+
+
+    async def _handle_create_response(request: Request) -> JSONResponse | StreamingResponse:
         api_key = _extract_api_key(request)
         if not api_key:
             return JSONResponse(
