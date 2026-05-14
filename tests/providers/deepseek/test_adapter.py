@@ -26,6 +26,56 @@ def test_adapter_translates_turn_to_chat_completions_payload() -> None:
     assert payload["messages"][1]["content"] == "say hi"
 
 
+def test_adapter_translates_tool_loop_items_and_passthrough_fields() -> None:
+    adapter = DeepSeekAdapter(default_model="deepseek-chat")
+    turn = CanonicalTurn(
+        turn_id="t1",
+        model="codex-mini",
+        input_items=[
+            {"type": "message", "role": "user", "content": "weather?"},
+            {
+                "type": "function_call",
+                "call_id": "call_123",
+                "name": "get_weather",
+                "arguments": '{"city":"Boston"}',
+            },
+            {
+                "type": "function_call_output",
+                "call_id": "call_123",
+                "output": '{"temperature":"70F"}',
+            },
+        ],
+        tools=[{"type": "function", "name": "get_weather"}],
+        tool_choice="auto",
+    )
+
+    payload = adapter.build_request(turn)
+
+    assert payload["messages"] == [
+        {"role": "user", "content": "weather?"},
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "call_123",
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "arguments": '{"city":"Boston"}',
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call_123",
+            "content": '{"temperature":"70F"}',
+        },
+    ]
+    assert payload["tools"] == [{"type": "function", "name": "get_weather"}]
+    assert payload["tool_choice"] == "auto"
+
+
 class _FakeAsyncClient:
     instances: list["_FakeAsyncClient"] = []
 

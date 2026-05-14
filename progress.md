@@ -1,5 +1,77 @@
 # 进度日志
 
+## 会话：2026-05-13
+
+### 阶段 5：真实 DeepSeek upstream smoke
+- **状态：** complete
+- 执行的操作：
+  - 重新读取 `task_plan.md`、`progress.md`、`findings.md`，恢复阶段 5 上下文
+  - 检查 `.venv/bin/agent-gateway` 可执行入口，确认可本地启动
+  - 尝试在沙箱内绑定本地端口，发现 `uvicorn` bind `127.0.0.1:8765` 返回 `operation not permitted`
+  - 提权启动本地 gateway 服务：`AG_HOST=127.0.0.1 AG_PORT=8765 .venv/bin/agent-gateway`
+  - 调用 `GET /healthz`，确认服务返回 `200 {"status":"ok"}`
+  - 使用真实 DeepSeek key 对 `POST /v1/responses` 发起非流式请求，prompt 为 `Reply with exactly: gateway-ok`
+  - 非流式返回 `200`，响应正文输出 `gateway-ok`
+  - 使用真实 DeepSeek key 对 `POST /v1/responses` 发起流式请求，prompt 为 `Reply with exactly: stream-ok`
+  - 流式成功输出 `response.created`、`response.output_item.added`、`response.output_text.delta`、`response.output_item.done`、`response.completed`
+  - 流式完成态正文为 `stream-ok`
+  - 停止本地服务，确认服务进程正常 shutdown
+- 创建/修改的文件：
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+
+### 阶段 6：补充 README
+- **状态：** in_progress
+- 执行的操作：
+  - 读取 `config.py`、`cli.py`、`pyproject.toml`，确认启动方式、环境变量和脚本入口
+  - 新增 `README.md`
+  - 写入项目定位、Phase 1 范围、安装与启动方式、鉴权方式、非流式/流式 curl 示例、tool loop 输入示例、测试命令和当前限制
+  - 按用户要求将 `README.md` 改为中文主导、术语保留英文的 mixed 风格
+- 创建/修改的文件：
+  - `README.md`
+
+### 阶段 5：补齐 Responses 兼容测试与 tool loop 语义
+- **状态：** in_progress
+- 执行的操作：
+  - 重新读取规划文件，确认当前主线为“阶段 5：测试与验证”
+  - 直接运行裸 `pytest`，发现当前 shell 未激活项目环境，随后切换为 `.venv/bin/pytest`
+  - 确认现有 17 项测试全部通过，但测试面缺少 `/v1/responses` 的真实集成覆盖
+  - 为 `CanonicalTurn` 增加 `tools` / `tool_choice` 字段
+  - 为 `ResponseProjection` 增加 `tool_call.started`、`tool_call.arguments.delta`、`tool_call.completed` 投影能力
+  - 为 `DeepSeekRectifier` 增加上游 `tool_calls` delta 整流与 `finish_reason=tool_calls` 完成态处理
+  - 为 `DeepSeekAdapter` 增加 `function_call` / `function_call_output` 输入映射，以及 `tools` / `tool_choice` 透传
+  - 重写 `/v1/responses` 返回序列化：非流式输出改为 `Responses` 风格 `output` 数组
+  - 新增 SSE 事件翻译层：对外输出 `response.created`、`response.output_item.added`、`response.output_text.delta`、`response.function_call_arguments.delta`、`response.completed` 等事件
+  - 新增 API 集成测试，覆盖非流式文本、流式文本、tool call 输出、function_call_output 回合续接
+  - 新增/补充单元测试，覆盖 rectifier tool call 整流、projection tool call 聚合、adapter tool loop 映射
+- 创建/修改的文件：
+  - `src/agent_gateway/app.py`
+  - `src/agent_gateway/canonical/models.py`
+  - `src/agent_gateway/canonical/projection.py`
+  - `src/agent_gateway/providers/deepseek/adapter.py`
+  - `src/agent_gateway/runtime/rectifier.py`
+  - `tests/ingress/test_responses_api.py`
+  - `tests/canonical/test_projection.py`
+  - `tests/providers/deepseek/test_adapter.py`
+  - `tests/runtime/test_rectifier.py`
+
+### 阶段 4：修复 Internal Server Error + Git 初始化
+- **状态：** complete
+- 执行的操作：
+  - 用户请求：`x-api-key` 改为客户端请求时携带而非服务端预配
+  - 用户测试 curl 时遇到 Internal Server Error
+  - 发现 `_handle_create_response` 缩进错误（定义在模块级而非 `create_app` 内），导致 `create_app()` 返回 None
+  - 添加全局异常捕获，网络/上游失败时返回 502 及具体错误
+  - 修复 TestClient lifespan 兼容性（smoke test 改用 `with TestClient(app) as client`）
+  - 创建 `.gitignore`
+  - `git init` + 首次 commit + 推送到 GitHub
+  - 验证全部 17 项测试通过
+- 创建/修改的文件：
+  - `src/agent_gateway/app.py`（重写，修复缩进 + 错误处理 + per-request API key）
+  - `tests/test_smoke.py`（TestClient lifespan 兼容）
+  - `.gitignore`（新增）
+
 ## 会话：2026-05-12
 
 ### 阶段 1：需求与定位收敛
@@ -141,21 +213,29 @@
 | 无 API key 返回 400 | POST /v1/responses 无 KEY | 返回 400 错误 | 状态码 400 | 通过 |
 | CLI 入口导入 | `from agent_gateway.cli import main` | 无错误 | 导入成功 | 通过 |
 | 全部已有测试 | pytest | 17 through | 17 passed | 通过 |
+| Internal Server Error 修复 | curl POST /v1/responses 假 key | 返回 502 带错误详情而非 500 | 状态码 502 | 通过 |
+| API 集成测试（定向） | `.venv/bin/pytest tests/ingress/test_responses_api.py tests/runtime/test_rectifier.py tests/canonical/test_projection.py tests/providers/deepseek/test_adapter.py -q` | 新增 Responses / tool loop 相关测试通过 | 16 passed | 通过 |
+| 全量回归 | `.venv/bin/pytest -q` | 所有测试通过 | 24 passed | 通过 |
+| 真实 upstream 非流式 smoke | `POST /v1/responses` with real key | 返回固定文本 `gateway-ok` | 状态码 200，正文 `gateway-ok` | 通过 |
+| 真实 upstream 流式 smoke | `POST /v1/responses` with real key and `stream=true` | 返回完整 `response.*` SSE 并以 `stream-ok` 完成 | 收到 `response.completed`，最终文本 `stream-ok` | 通过 |
 
 ## 错误日志
 | 时间戳 | 错误 | 尝试次数 | 解决方案 |
 |--------|------|---------|---------|
 | 2026-05-12 | 当前目录不是 git 仓库 | 1 | 暂不依赖 git，先记录规划文件 |
 | 2026-05-12 | 无法将设计文档提交到 git | 1 | 先写入本地 spec 文件，待进入 git worktree 后再补提交 |
+| 2026-05-13 | curl POST /v1/responses 返回 Internal Server Error | 1 | 修复 `_handle_create_response` 缩进 + 添加全局异常捕获返回 502 |
+| 2026-05-13 | 沙箱内本地 bind `127.0.0.1:8765` 失败 | 1 | 提权启动本地服务 |
+| 2026-05-13 | 沙箱内 Python localhost 请求失败 `Operation not permitted` | 1 | 改用提权的本地 `curl` 做真实 smoke |
 
 ## 五问重启检查
 | 问题 | 答案 |
 |------|------|
-| 我在哪里？ | 阶段 3：implementation plan 已完成，等待选择执行方式 |
-| 我要去哪里？ | 选择 Subagent-Driven 或 Inline Execution，然后开始按计划实现 |
+| 我在哪里？ | 已完成真实 DeepSeek upstream smoke；Codex 客户端端到端验证仍未做 |
+| 我要去哪里？ | 若要完成阶段 5 的最后一项，需要接真实 Codex 客户端做 agent loop smoke |
 | 目标是什么？ | 规划一个本地运行的通用多协议网关，第一版只接 DeepSeek，上游重点验证客户端为 Codex |
 | 我学到了什么？ | 见 findings.md，当前已明确 Split-core、Canonical 事件模型、host-control 子域和首版范围边界 |
-| 我做了什么？ | 已完成定位、设计收敛、mixed 风格 spec 落盘、implementation plan 落盘与自检 |
+| 我做了什么？ | 完成所有实现 Task、补齐 CLI + 网关路由、修复 Internal Server Error、补齐本地集成测试，并完成真实 DeepSeek upstream smoke |
 
 ---
 *每个阶段完成后或遇到错误时更新此文件*

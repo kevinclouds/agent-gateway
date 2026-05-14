@@ -39,3 +39,5 @@ class CanonicalTurn:
     turn_id: str
     model: str
     input_items: list[dict[str, object]]
+    tools: list[dict[str, object]] = field(default_factory=list)
+    tool_choice: object | None = None

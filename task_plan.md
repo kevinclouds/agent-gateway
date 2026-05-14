@@ -4,7 +4,7 @@
 在 `agent-gateway` 中规划一个本地运行的通用多协议网关，第一版只对接 `DeepSeek` 上游，并以 `Codex` 作为首个重点验证客户端。
 
 ## 当前阶段
-阶段 4（实现完成，待集成测试与验证）
+阶段 5（本地 Responses 兼容验证完成，待真实 Codex 集成 smoke）
 
 ## 各阶段
 
@@ -37,9 +37,9 @@
 
 ### 阶段 5：测试与验证
 - [ ] 验证 Codex agent loop 可稳定运行
-- [ ] 补充非流式、流式、tool calls、tool outputs 测试
-- [ ] 将测试结果记录到 progress.md
-- **状态：** pending
+- [x] 补充非流式、流式、tool calls、tool outputs 测试
+- [x] 将测试结果记录到 progress.md
+- **状态：** in_progress
 
 ### 阶段 6：交付
 - [ ] 检查输出文件与说明文档
@@ -74,8 +74,10 @@
 | 无法将设计文档提交到 git | 1 | 先将 spec 落盘到 `docs/superpowers/specs/`，等待用户审阅；若后续进入 git worktree 再补提交 |
 
 ## 备注
-- 当前还没有代码实现，处于设计与上下文固化阶段。
 - 不要把 CC-Switch 的 provider 管理、切换和配置面板重新做一遍。
 - `Agent-Gateway App / 桌面宠物 / 统一通知授权 UI` 暂不纳入第一版实现，只保留抽象扩展接口。
 - 正式设计文档已写入 `docs/superpowers/specs/2026-05-12-agent-gateway-design.md`，当前等待用户审阅。
 - implementation plan 已写入 `docs/superpowers/plans/2026-05-12-agent-gateway-phase1-implementation.md`，当前等待选择执行方式。
+- 本地已补齐 Responses 兼容测试：非流式 JSON 输出、SSE 事件流、tool call 输出、function_call_output 回合续接。
+- 已完成一轮真实 DeepSeek upstream smoke：本地服务可启动，非流式请求返回 `gateway-ok`，流式请求完整返回 `stream-ok` 及 `response.completed`。
+- 尚未接真实 Codex 客户端做一轮端到端 smoke；当前“Codex agent loop”结论来自本地模拟的 Responses/tool loop 集成测试。

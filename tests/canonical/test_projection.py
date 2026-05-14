@@ -50,3 +50,37 @@ def test_snapshot_returns_defensive_copy() -> None:
     assert fresh_snapshot.messages[0].message_id == "m1"
     assert fresh_snapshot.messages[0].role == "assistant"
     assert fresh_snapshot.messages[0].segments == []
+
+
+def test_projection_accumulates_tool_call_arguments_and_completion() -> None:
+    projection = ResponseProjection()
+    projection.apply(CanonicalStreamEvent(type="response.started", data={"response_id": "r1"}))
+    projection.apply(
+        CanonicalStreamEvent(
+            type="tool_call.started",
+            data={"response_id": "r1", "call_id": "call_123", "name": "get_weather"},
+        )
+    )
+    projection.apply(
+        CanonicalStreamEvent(
+            type="tool_call.arguments.delta",
+            data={"response_id": "r1", "call_id": "call_123", "text": '{"city":"Bos'},
+        )
+    )
+    projection.apply(
+        CanonicalStreamEvent(
+            type="tool_call.arguments.delta",
+            data={"response_id": "r1", "call_id": "call_123", "text": 'ton"}'},
+        )
+    )
+    projection.apply(
+        CanonicalStreamEvent(
+            type="tool_call.completed",
+            data={"response_id": "r1", "call_id": "call_123"},
+        )
+    )
+
+    response = projection.snapshot()
+    assert response.tool_calls[0].name == "get_weather"
+    assert response.tool_calls[0].arguments == '{"city":"Boston"}'
+    assert response.tool_calls[0].status == "completed"

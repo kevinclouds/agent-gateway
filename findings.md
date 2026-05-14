@@ -21,6 +21,10 @@
 - “统一授权”如果成立，本质上更像一个独立子系统：`authorization event interception + user notification + approval center`，它与基础协议翻译内核是强相关但不同层的问题。
 - 用户这里说的“授权”特指 `Codex`、`Claude Code` 等 agent 宿主运行时里的权限批准事件，例如命令执行、文件访问、提权、网络访问等，不是模型协议层里的普通 tool call 确认。
 - 这意味着统一授权更接近 `agent host control plane`，而不是单纯的 LLM protocol translation。
+- 阶段 5 本地验证暴露出一个关键差距：此前 `/v1/responses` 端点虽然可返回文本，但返回体和 SSE 事件仍是内部 canonical 形状，不足以支撑真正的 `Responses`-style client loop。
+- 要保住 tool loop fidelity，网关不只要把上游 `tool_calls` 整流成输出项，还必须接受下游回传的 `function_call` 与 `function_call_output` 输入项，并把它们映射回 `chat/completions` 的 assistant/tool message 序列。
+- 在当前 Codex 沙箱里，本地 socket bind 和 localhost HTTP 请求默认都可能被限制；做真实 smoke 需要提权启动服务并通过提权请求本地端口。
+- 一旦提权启动，本地 gateway 已能真实转发到 DeepSeek：非流式成功返回 `gateway-ok`，流式成功按 `response.created -> ... -> response.completed` 输出 `stream-ok`。
 
 ## 技术决策
 | 决策 | 理由 |
@@ -45,6 +49,9 @@
 | `Canonical runtime` 采用“双层流式模型”：`CanonicalStreamEvent` 为真相源，`ResponseProjection` 为消费视图 | 既兼容 `Responses` 事件语义，也能把 `DeepSeek chat/completions` 整流进统一状态机 |
 | `Canonical Model` 最小对象集合包含 `CanonicalResponse / CanonicalTurn / CanonicalMessage / CanonicalToolCall / CanonicalStreamEvent / CanonicalBlock` | 覆盖首版协议翻译、流式状态机、tool loop 和最小权限阻塞表达，不把 UI 或策略细节塞进核心 |
 | `host-control` 最小子域包含 `PermissionRequest / PermissionDecision / PermissionCapability / PermissionHandler / PolicyEvaluator` | 保留宿主权限语义与处理接口，为未来通知、审批和桌面宠物扩展预留稳定边界 |
+| `/v1/responses` 对外返回 `Responses` 风格 JSON 与 `response.*` SSE 事件，而不是内部 canonical 事件 | 真实客户端消费的是 Responses 语义，内部 canonical 只应该存在于网关内部 |
+| 下游输入标准化为三类：`message`、`function_call`、`function_call_output` | 这样才能把工具回合从 Responses 语义可靠映射到 DeepSeek `chat/completions` 上游 |
+| 真实 upstream smoke 以本地最小 prompt 做双路径验证：非流式固定文本 + 流式固定文本 | 能最直接验证 gateway 的请求转发、响应整流和完成态事件是否正常 |
 
 ## 遇到的问题
 | 问题 | 解决方案 |

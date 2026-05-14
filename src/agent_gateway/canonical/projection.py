@@ -1,13 +1,19 @@
 from copy import deepcopy
 
 from agent_gateway.canonical.events import CanonicalStreamEvent
-from agent_gateway.canonical.models import CanonicalBlock, CanonicalMessage, CanonicalResponse
+from agent_gateway.canonical.models import (
+    CanonicalBlock,
+    CanonicalMessage,
+    CanonicalResponse,
+    CanonicalToolCall,
+)
 
 
 class ResponseProjection:
     def __init__(self) -> None:
         self._response = CanonicalResponse(response_id="pending")
         self._message_index: dict[str, CanonicalMessage] = {}
+        self._tool_call_index: dict[str, CanonicalToolCall] = {}
 
     def apply(self, event: CanonicalStreamEvent) -> None:
         if event.type == "response.started":
@@ -31,6 +37,25 @@ class ResponseProjection:
                 message.segments[-1]["text"] += text
             else:
                 message.segments.append({"type": "text", "text": text})
+            return
+
+        if event.type == "tool_call.started":
+            tool_call = CanonicalToolCall(
+                call_id=str(event.data["call_id"]),
+                name=str(event.data["name"]),
+            )
+            self._tool_call_index[tool_call.call_id] = tool_call
+            self._response.tool_calls.append(tool_call)
+            return
+
+        if event.type == "tool_call.arguments.delta":
+            tool_call = self._tool_call_index[str(event.data["call_id"])]
+            tool_call.arguments += str(event.data["text"])
+            return
+
+        if event.type == "tool_call.completed":
+            tool_call = self._tool_call_index[str(event.data["call_id"])]
+            tool_call.status = "completed"
             return
 
         if event.type == "permission.blocked":
