@@ -36,9 +36,21 @@
 - **状态：** complete
 
 ### 阶段 5：测试与验证
-- [ ] 验证 Codex agent loop 可稳定运行
 - [x] 补充非流式、流式、tool calls、tool outputs 测试
 - [x] 将测试结果记录到 progress.md
+- [x] 接真实 Codex 客户端 smoke，修复集成 bug（见阶段 5b）
+- [ ] 验证 Codex agent loop 可稳定跑通（tool loop 无 502）
+- **状态：** in_progress
+
+### 阶段 5b：Codex 集成 Bug 修复（btw 分支）
+- [x] 三层适配器重构：BaseProviderAdapter / AdapterRegistry / DeepSeekStandard+Thinking
+- [x] ReasoningStore 持久化（`.reasoning_store.json`）
+- [x] 并行 function_call 合并为单条 assistant 消息
+- [x] null content 修复（`"content": null` → 不再输出 "None"）
+- [x] 未知模型名回退 default_model（修复 gpt-5.4-mini 透传 DeepSeek）
+- [x] reasoning_content 降级重试（thinking 模型 400 → 自动用 deepseek-chat 重试）
+- [ ] 提交当前 4 个待提交文件
+- [ ] 验证 Codex agent loop 稳定
 - **状态：** in_progress
 
 ### 阶段 6：交付
@@ -72,6 +84,11 @@
 |------|---------|---------|
 | 当前目录不是 git 仓库 | 1 | 暂不依赖 git，先记录规划文件 |
 | 无法将设计文档提交到 git | 1 | 先将 spec 落盘到 `docs/superpowers/specs/`，等待用户审阅；若后续进入 git worktree 再补提交 |
+| DeepSeek 400: reasoning_content must be passed back | 多次 | 新增 ReasoningStore 持久化；对 store 无记录情况自动用 deepseek-chat 降级重试 |
+| DeepSeek 400: insufficient tool messages | 1 | 将连续 function_call items 合并为单条 assistant 消息的多个 tool_calls |
+| Codex 输出 NoneNoneNone... | 1 | thinking 模型推理阶段 `"content": null`，`str(None)="None"` 被作为文字输出；改为 `if delta.get("content"):` 跳过 null |
+| DeepSeek 400: unsupported model name gpt-5.4-mini | 1 | registry 对未命中 model_map 和 model_type_map 的模型名回退 default_model |
+| CC-Switch 本地代理 404 | 1 | CC-Switch proxy 不支持 /chat/completions；恢复 DEEPSEEK_BASE_URL=https://api.deepseek.com |
 
 ## 备注
 - 不要把 CC-Switch 的 provider 管理、切换和配置面板重新做一遍。

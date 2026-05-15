@@ -1,5 +1,32 @@
 # 进度日志
 
+## 会话：2026-05-15（btw 分支 — Codex 集成调试）
+
+### 三层适配器重构 + Codex 集成 bug 修复
+- **状态：** in_progress（未提交的 4 个文件变更待 commit）
+- 执行的操作：
+  - **三层适配器体系**：新增 `BaseProviderAdapter` ABC、`AdapterRegistry`（三层解析：model → type → default），将 `DeepSeekAdapter` 拆分为 `DeepSeekBaseAdapter / DeepSeekStandardAdapter / DeepSeekThinkingAdapter`
+  - **config.py**：`thinking_models` 替换为 `model_type_map`（JSON，默认将 `deepseek-reasoner / DeepSeek-V4-Flash / DeepSeek-V4-Pro` 映射到 `deepseek-thinking` 类型），新增 `MODEL_TYPE_MAP` 环境变量支持
+  - **ReasoningStore 持久化**：新增 `runtime/reasoning_store.py`，`dict` 子类，写入时自动持久化到 `.reasoning_store.json`（默认路径），网关重启后 `reasoning_content` 不再丢失
+  - **并行 function_call 修复**：连续多个 `function_call` item 现合并为一个 assistant 消息的多个 `tool_calls`，修复 DeepSeek "insufficient tool messages" 400 错误
+  - **null content 修复**：DeepSeek thinking 模型在推理阶段会发送 `"content": null`，`str(None) = "None"` 被当成文字输出（导致 Codex 看到 `NoneNoneNone...`）；将 `if "content" in delta:` 改为 `if delta.get("content"):` 跳过 null 和空字符串
+  - **未知模型回退**：registry `_resolve_model` 改为对 model_map 和 model_type_map 均未命中的模型名回退 `default_model`，而非透传；修复 `gpt-5.4-mini` 被原样发给 DeepSeek 的问题
+  - **reasoning_content 自动降级**：当 thinking 模型返回 400 "reasoning_content must be passed back" 时（store 中无对应 call_id），自动用 `deepseek-chat`（`DeepSeekStandardAdapter`）重试，而非直接返回 502
+  - 提交 `9e0a411`（三层适配器 + 持久化 + 并行 tool call 修复）
+  - 当前待提交：app.py（reasoning fallback）、registry.py（未知模型回退）、rectifier.py（null content）、tests/runtime/test_rectifier.py（新增 null content 测试）
+- 创建/修改的文件：
+  - `src/agent_gateway/providers/base.py`（新增）
+  - `src/agent_gateway/providers/registry.py`（新增 + 修改）
+  - `src/agent_gateway/providers/deepseek/adapter.py`（重写，3 类）
+  - `src/agent_gateway/runtime/reasoning_store.py`（新增）
+  - `src/agent_gateway/runtime/rectifier.py`（null content 修复）
+  - `src/agent_gateway/config.py`（model_type_map 替换 thinking_models）
+  - `src/agent_gateway/app.py`（registry 接入 + reasoning fallback）
+  - `tests/providers/deepseek/test_adapter.py`（更新）
+  - `tests/runtime/test_rectifier.py`（新增 null content 测试）
+
+---
+
 ## 会话：2026-05-15
 
 ### 端口与 README 收尾

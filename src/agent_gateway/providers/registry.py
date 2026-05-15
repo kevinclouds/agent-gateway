@@ -20,9 +20,15 @@ class AdapterRegistry:
         self._model_type_map = model_type_map or {}
 
     def _resolve_model(self, requested: str | None) -> str:
-        if requested and requested in self._model_map:
+        if not requested:
+            return self._default_model
+        if requested in self._model_map:
             return self._model_map[requested]
-        return requested or self._default_model
+        # Pass through only if it's a known downstream model name (in type map or is default).
+        # Unknown OpenAI-style names that aren't configured fall back to default.
+        if requested in self._model_type_map or requested == self._default_model:
+            return requested
+        return self._default_model
 
     def _resolve_adapter(self, resolved_model: str) -> BaseProviderAdapter:
         if resolved_model in self._model_adapters:

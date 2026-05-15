@@ -19,7 +19,7 @@ class DeepSeekRectifier:
         events: list[CanonicalStreamEvent] = []
         if delta.get("reasoning_content"):
             self._reasoning_content += str(delta["reasoning_content"])
-        if "content" in delta:
+        if delta.get("content"):
             message_key = (response_id, message_id)
             if message_key not in self._started_messages:
                 events.append(

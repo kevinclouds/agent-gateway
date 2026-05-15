@@ -89,3 +89,24 @@ def test_rectifier_turns_tool_call_deltas_into_tool_events() -> None:
         "tool_call.completed",
     ]
     assert second_events[0].data["text"] == 'ton"}'
+
+
+def test_rectifier_skips_null_content_from_thinking_phase() -> None:
+    rectifier = DeepSeekRectifier()
+
+    # thinking phase: reasoning_content present, content is null
+    thinking_events = rectifier.rectify(
+        {"choices": [{"delta": {"reasoning_content": "let me think...", "content": None}}]},
+        response_id="r1",
+        message_id="m1",
+    )
+    # content phase: actual text
+    content_events = rectifier.rectify(
+        {"choices": [{"delta": {"content": "Hello"}}]},
+        response_id="r1",
+        message_id="m1",
+    )
+
+    assert thinking_events == []  # null content produces no events
+    assert [e.type for e in content_events] == ["message.started", "content.delta"]
+    assert content_events[1].data["text"] == "Hello"

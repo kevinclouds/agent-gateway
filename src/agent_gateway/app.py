@@ -477,6 +477,33 @@ def create_app() -> FastAPI:
 
         try:
             deepseek_resp = await client.stream_chat_completions(deepseek_payload)
+        except RuntimeError as exc:
+            await client.aclose()
+            if "reasoning_content" in str(exc):
+                config = request.app.state.config
+                logger.warning(
+                    "thinking model rejected request (missing reasoning_content) — retrying with %s",
+                    config.default_model,
+                )
+                fallback_turn = CanonicalTurn(
+                    turn_id=response_id,
+                    model=config.default_model,
+                    input_items=input_items,
+                    tools=list(body.get("tools", [])),
+                    tool_choice=body.get("tool_choice"),
+                )
+                deepseek_payload = DeepSeekStandardAdapter().build_request(fallback_turn)
+                client = DeepSeekClient(
+                    base_url=config.deepseek_base_url,
+                    api_key=api_key,
+                )
+                try:
+                    deepseek_resp = await client.stream_chat_completions(deepseek_payload)
+                except Exception:
+                    await client.aclose()
+                    raise
+            else:
+                raise
         except Exception:
             await client.aclose()
             raise
