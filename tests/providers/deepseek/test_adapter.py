@@ -3,15 +3,16 @@ import asyncio
 import httpx
 
 from agent_gateway.canonical.models import CanonicalTurn
-from agent_gateway.providers.deepseek.adapter import DeepSeekAdapter
+from agent_gateway.providers.deepseek.adapter import DeepSeekStandardAdapter, DeepSeekThinkingAdapter
 from agent_gateway.providers.deepseek.client import DeepSeekClient
+from agent_gateway.providers.registry import AdapterRegistry
 
 
-def test_adapter_translates_turn_to_chat_completions_payload() -> None:
-    adapter = DeepSeekAdapter(default_model="deepseek-chat")
+def test_standard_adapter_builds_chat_completions_payload() -> None:
+    adapter = DeepSeekStandardAdapter()
     turn = CanonicalTurn(
         turn_id="t1",
-        model="codex-mini",
+        model="deepseek-chat",
         input_items=[
             {"role": "system", "content": "be concise"},
             {"role": "user", "content": "say hi"},
@@ -26,11 +27,70 @@ def test_adapter_translates_turn_to_chat_completions_payload() -> None:
     assert payload["messages"][1]["content"] == "say hi"
 
 
-def test_adapter_translates_tool_loop_items_and_passthrough_fields() -> None:
-    adapter = DeepSeekAdapter(default_model="deepseek-chat")
+def test_standard_adapter_ignores_reasoning_store() -> None:
+    adapter = DeepSeekStandardAdapter()
     turn = CanonicalTurn(
         turn_id="t1",
-        model="codex-mini",
+        model="deepseek-chat",
+        input_items=[
+            {"type": "function_call", "call_id": "call_1", "name": "fn", "arguments": "{}"},
+        ],
+    )
+
+    payload = adapter.build_request(turn, reasoning_store={"call_1": "thinking..."})
+
+    assert "reasoning_content" not in payload["messages"][0]
+
+
+def test_thinking_adapter_injects_reasoning_content() -> None:
+    adapter = DeepSeekThinkingAdapter()
+    turn = CanonicalTurn(
+        turn_id="t1",
+        model="deepseek-reasoner",
+        input_items=[
+            {"type": "function_call", "call_id": "call_1", "name": "fn", "arguments": "{}"},
+        ],
+    )
+
+    payload = adapter.build_request(turn, reasoning_store={"call_1": "my reasoning"})
+
+    assert payload["messages"][0]["reasoning_content"] == "my reasoning"
+
+
+def test_registry_resolves_model_and_adapter() -> None:
+    standard = DeepSeekStandardAdapter()
+    thinking = DeepSeekThinkingAdapter()
+    registry = AdapterRegistry(
+        default_adapter=standard,
+        default_model="deepseek-chat",
+        model_map={"codex-mini": "deepseek-chat"},
+        type_adapters={"deepseek-thinking": thinking},
+        model_type_map={"deepseek-reasoner": "deepseek-thinking"},
+    )
+
+    # virtual model resolved to default model, uses standard adapter
+    turn = CanonicalTurn(turn_id="t1", model="codex-mini", input_items=[{"role": "user", "content": "hi"}])
+    payload = registry.build_request(turn)
+    assert payload["model"] == "deepseek-chat"
+
+    # thinking model resolved to thinking adapter
+    turn2 = CanonicalTurn(
+        turn_id="t2",
+        model="deepseek-reasoner",
+        input_items=[
+            {"type": "function_call", "call_id": "c1", "name": "fn", "arguments": "{}"},
+        ],
+    )
+    payload2 = registry.build_request(turn2, reasoning_store={"c1": "thoughts"})
+    assert payload2["model"] == "deepseek-reasoner"
+    assert payload2["messages"][0]["reasoning_content"] == "thoughts"
+
+
+def test_adapter_translates_tool_loop_items_and_passthrough_fields() -> None:
+    adapter = DeepSeekStandardAdapter()
+    turn = CanonicalTurn(
+        turn_id="t1",
+        model="deepseek-chat",
         input_items=[
             {"type": "message", "role": "user", "content": "weather?"},
             {
@@ -72,8 +132,32 @@ def test_adapter_translates_tool_loop_items_and_passthrough_fields() -> None:
             "content": '{"temperature":"70F"}',
         },
     ]
-    assert payload["tools"] == [{"type": "function", "name": "get_weather"}]
+    assert payload["tools"] == [{"type": "function", "function": {"name": "get_weather", "description": "", "parameters": {"type": "object", "properties": {}}}}]
     assert payload["tool_choice"] == "auto"
+
+
+def test_adapter_groups_parallel_function_calls_into_one_assistant_message() -> None:
+    adapter = DeepSeekStandardAdapter()
+    turn = CanonicalTurn(
+        turn_id="t1",
+        model="deepseek-chat",
+        input_items=[
+            {"type": "message", "role": "user", "content": "run both"},
+            {"type": "function_call", "call_id": "c1", "name": "fn_a", "arguments": "{}"},
+            {"type": "function_call", "call_id": "c2", "name": "fn_b", "arguments": "{}"},
+            {"type": "function_call_output", "call_id": "c1", "output": "result_a"},
+            {"type": "function_call_output", "call_id": "c2", "output": "result_b"},
+        ],
+    )
+
+    payload = adapter.build_request(turn)
+
+    messages = payload["messages"]
+    assert len(messages) == 4
+    assert messages[1]["role"] == "assistant"
+    assert len(messages[1]["tool_calls"]) == 2  # both calls in one assistant message
+    assert messages[2]["role"] == "tool"
+    assert messages[3]["role"] == "tool"
 
 
 class _FakeAsyncClient:

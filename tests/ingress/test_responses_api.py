@@ -143,11 +143,14 @@ def test_responses_endpoint_projects_tool_calls(monkeypatch: object) -> None:
     assert _FakeDeepSeekClient.instances[0].payloads[0]["tools"] == [
         {
             "type": "function",
-            "name": "get_weather",
-            "parameters": {
-                "type": "object",
-                "properties": {"city": {"type": "string"}},
-                "required": ["city"],
+            "function": {
+                "name": "get_weather",
+                "description": "",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                    "required": ["city"],
+                },
             },
         }
     ]

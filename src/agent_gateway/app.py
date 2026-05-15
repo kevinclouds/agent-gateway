@@ -1,7 +1,10 @@
 import json
+import logging
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+
+logger = logging.getLogger("agent_gateway")
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -10,9 +13,11 @@ from agent_gateway.config import GatewayConfig
 from agent_gateway.canonical.events import CanonicalStreamEvent
 from agent_gateway.canonical.models import CanonicalTurn
 from agent_gateway.canonical.projection import ResponseProjection
-from agent_gateway.providers.deepseek.adapter import DeepSeekAdapter
+from agent_gateway.providers.deepseek.adapter import DeepSeekStandardAdapter, DeepSeekThinkingAdapter
 from agent_gateway.providers.deepseek.client import DeepSeekClient
+from agent_gateway.providers.registry import AdapterRegistry
 from agent_gateway.runtime.engine import RuntimeEngine
+from agent_gateway.runtime.reasoning_store import ReasoningStore
 from agent_gateway.runtime.rectifier import DeepSeekRectifier
 
 
@@ -20,8 +25,15 @@ from agent_gateway.runtime.rectifier import DeepSeekRectifier
 async def lifespan(app: FastAPI):
     config = GatewayConfig.from_env()
     app.state.config = config
-    app.state.adapter = DeepSeekAdapter(default_model=config.default_model)
+    app.state.registry = AdapterRegistry(
+        default_adapter=DeepSeekStandardAdapter(),
+        default_model=config.default_model,
+        model_map=config.model_map,
+        type_adapters={"deepseek-thinking": DeepSeekThinkingAdapter()},
+        model_type_map=config.model_type_map,
+    )
     app.state.engine = RuntimeEngine()
+    app.state.reasoning_store = ReasoningStore(config.reasoning_store_file)
     yield
 
 
@@ -356,6 +368,7 @@ async def _collect_events(
     response_id: str,
     message_id: str,
     rectifier: DeepSeekRectifier,
+    reasoning_store: dict[str, str],
 ) -> list[CanonicalStreamEvent]:
     events: list[CanonicalStreamEvent] = [
         CanonicalStreamEvent(type="response.started", data={"response_id": response_id}),
@@ -367,7 +380,11 @@ async def _collect_events(
         if payload == "[DONE]":
             break
         chunk = json.loads(payload)
-        events.extend(rectifier.rectify(chunk, response_id=response_id, message_id=message_id))
+        new_events = rectifier.rectify(chunk, response_id=response_id, message_id=message_id)
+        for event in new_events:
+            if event.type == "tool_call.completed" and event.data.get("reasoning_content"):
+                reasoning_store[str(event.data["call_id"])] = str(event.data["reasoning_content"])
+        events.extend(new_events)
     events.append(CanonicalStreamEvent(type="response.completed", data={"response_id": response_id}))
     return events
 
@@ -380,6 +397,7 @@ async def _stream_events(
     model: str,
     rectifier: DeepSeekRectifier,
     client: DeepSeekClient,
+    reasoning_store: dict[str, str],
 ) -> AsyncIterator[str]:
     translator = _ResponsesEventTranslator(response_id=response_id, model=model)
     try:
@@ -394,6 +412,8 @@ async def _stream_events(
                 break
             chunk = json.loads(payload)
             for event in rectifier.rectify(chunk, response_id=response_id, message_id=message_id):
+                if event.type == "tool_call.completed" and event.data.get("reasoning_content"):
+                    reasoning_store[str(event.data["call_id"])] = str(event.data["reasoning_content"])
                 for encoded in translator.apply(event):
                     yield encoded
 
@@ -434,6 +454,7 @@ def create_app() -> FastAPI:
         model = str(body.get("model", request.app.state.config.default_model))
         input_items = _normalize_input_items(body.get("input", []))
         stream = bool(body.get("stream", False))
+        logger.debug("stream=%s model=%s", stream, model)
 
         response_id = str(uuid.uuid4())
         message_id = str(uuid.uuid4())
@@ -451,7 +472,8 @@ def create_app() -> FastAPI:
             api_key=api_key,
         )
 
-        deepseek_payload = request.app.state.adapter.build_request(turn)
+        reasoning_store: dict[str, str] = request.app.state.reasoning_store
+        deepseek_payload = request.app.state.registry.build_request(turn, reasoning_store=reasoning_store)
 
         try:
             deepseek_resp = await client.stream_chat_completions(deepseek_payload)
@@ -470,6 +492,7 @@ def create_app() -> FastAPI:
                     model=model,
                     rectifier=rectifier,
                     client=client,
+                    reasoning_store=reasoning_store,
                 ),
                 media_type="text/event-stream",
             )
@@ -480,6 +503,7 @@ def create_app() -> FastAPI:
                 response_id=response_id,
                 message_id=message_id,
                 rectifier=rectifier,
+                reasoning_store=reasoning_store,
             )
             snapshot = request.app.state.engine.consume(events)
             return JSONResponse(content=_response_to_dict(snapshot, model=model))

@@ -5,6 +5,7 @@ class DeepSeekRectifier:
     def __init__(self) -> None:
         self._started_messages: set[tuple[str, str]] = set()
         self._tool_call_state: dict[tuple[str, str, int], dict[str, object]] = {}
+        self._reasoning_content: str = ""
 
     def rectify(
         self,
@@ -16,6 +17,8 @@ class DeepSeekRectifier:
         choice = chunk["choices"][0]
         delta = choice.get("delta", {})
         events: list[CanonicalStreamEvent] = []
+        if delta.get("reasoning_content"):
+            self._reasoning_content += str(delta["reasoning_content"])
         if "content" in delta:
             message_key = (response_id, message_id)
             if message_key not in self._started_messages:
@@ -88,14 +91,14 @@ class DeepSeekRectifier:
                 if key[:2] != (response_id, message_id):
                     continue
                 if state["started"] and not state["completed"]:
+                    event_data: dict[str, object] = {
+                        "response_id": response_id,
+                        "call_id": str(state["call_id"]),
+                    }
+                    if self._reasoning_content:
+                        event_data["reasoning_content"] = self._reasoning_content
                     events.append(
-                        CanonicalStreamEvent(
-                            type="tool_call.completed",
-                            data={
-                                "response_id": response_id,
-                                "call_id": str(state["call_id"]),
-                            },
-                        )
+                        CanonicalStreamEvent(type="tool_call.completed", data=event_data)
                     )
                     state["completed"] = True
         return events
